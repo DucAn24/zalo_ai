@@ -8,6 +8,7 @@
 #   MAX_SEQS  default 16
 #   TP        default 1                   (tensor parallel size; 2 on 2xRTX 5090)
 #   EXTRA     any additional vLLM flags
+#   PYTHON    interpreter that has vLLM installed (default: python)
 set -euo pipefail
 MODEL="${MODEL:-Qwen/Qwen3-8B-AWQ}"
 PORT="${PORT:-8000}"
@@ -18,7 +19,7 @@ MAX_SEQS="${MAX_SEQS:-16}"
 TP="${TP:-1}"
 export VLLM_USE_V1="${VLLM_USE_V1:-0}"     # V0 engine: works on Turing (T4); V1 needs newer GPUs
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
-exec python -m vllm.entrypoints.openai.api_server \
+exec "${PYTHON:-python}" -m vllm.entrypoints.openai.api_server \
   --model "$MODEL" --served-model-name "$MODEL" \
   --host 127.0.0.1 --port "$PORT" \
   --max-model-len "$MAX_LEN" --gpu-memory-utilization "$GPU_UTIL" --dtype "$DTYPE" \
