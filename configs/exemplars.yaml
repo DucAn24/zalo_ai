@@ -445,3 +445,182 @@
   type: unanswerable
   periods: []
   reason: "Không có thông tin đánh giá thái độ nhân viên trong dữ liệu."
+
+# ---- added after the first Colab run; every SQL below was checked against dev-group train answers ----
+- q: "Tháng 1/2026 khách Vương Hạnh Chi ghi nợ thêm bao nhiêu và trả nợ đc bao nhiêu? Ghi hai số theo thứ tự: nợ thêm, trả được."
+  type: list
+  periods: ["P1 = month:2026-01"]
+  entities: ["khách hàng: 'Vương Hạnh Chi' → cột customer_display"]
+  requires: [orders, payments, payment_method]
+  sql: |
+    -- chỉ đơn ghi nợ, không huỷ. Nợ thêm = phần tổng đơn chưa trả ngay trong ngày mua (đơn đặt trong kỳ).
+    -- Trả nợ = các khoản trả SAU ngày mua, có ngày trả trong kỳ, của mọi đơn ghi nợ (kể cả đơn kỳ trước).
+    WITH debt AS (
+      SELECT order_id, order_date, total_payable FROM orders
+      WHERE payment_method = 'ghi_no' AND COALESCE(status, '') <> 'huy' AND customer_display = 'Vương Hạnh Chi'
+    ), paid_now AS (
+      SELECT p.order_id, SUM(p.pay_amount) AS s FROM payments p JOIN debt d ON d.order_id = p.order_id
+      WHERE p.pay_date = d.order_date GROUP BY p.order_id
+    )
+    SELECT
+      (SELECT COALESCE(SUM(d.total_payable - COALESCE(n.s, 0)), 0) FROM debt d LEFT JOIN paid_now n ON n.order_id = d.order_id WHERE {P1:d.order_date}),
+      (SELECT COALESCE(SUM(p.pay_amount), 0) FROM payments p JOIN debt d ON d.order_id = p.order_id WHERE p.pay_date > d.order_date AND {P1:p.pay_date})
+
+- q: "Trong tháng 11/2025, tiền khách trả bớt nợ các đơn mua chịu được bao nhiêu?"
+  type: number
+  periods: ["P1 = month:2025-11"]
+  requires: [orders, payments, payment_method]
+  sql: |
+    SELECT COALESCE(SUM(p.pay_amount), 0) FROM payments p JOIN orders d ON d.order_id = p.order_id
+    WHERE d.payment_method = 'ghi_no' AND COALESCE(d.status, '') <> 'huy' AND p.pay_date > d.order_date AND {P1:p.pay_date}
+
+- q: "Tính đến hết ngày 08/10/2025, tổng số tiền khách còn nợ ở các đơn đã đặt quá 15 ngày là bao nhiêu?"
+  type: number
+  periods: ["P1 = until:2025-10-08"]
+  requires: [orders, payments]
+  sql: |
+    -- tuổi nợ = số ngày từ ngày đặt đến ngày X ({P1.last} - order_date); "quá 15" = lớn hơn 15
+    WITH paid AS (SELECT order_id, SUM(pay_amount) AS s FROM payments WHERE pay_date < {P1.end} GROUP BY order_id),
+    d AS (
+      SELECT o.order_date, o.total_payable - COALESCE(p.s, 0) AS owe FROM orders o LEFT JOIN paid p ON p.order_id = o.order_id
+      WHERE COALESCE(o.status, '') <> 'huy' AND o.order_date < {P1.end} AND COALESCE(o.payment_method, '') <> 'cod'
+    )
+    SELECT COALESCE(SUM(owe), 0) FROM d WHERE owe > 0 AND ({P1.last} - order_date) > 15
+
+- q: "tính đến hết ngày 17/01/2026, phân tuổi nợ còn lại theo 3 nhóm 0–7 ngày, 8–15 ngày, trên 15 ngày: mỗi nhóm bn tiền"
+  type: list
+  periods: ["P1 = until:2026-01-17"]
+  requires: [orders, payments]
+  sql: |
+    WITH paid AS (SELECT order_id, SUM(pay_amount) AS s FROM payments WHERE pay_date < {P1.end} GROUP BY order_id),
+    d AS (
+      SELECT o.order_date, o.total_payable - COALESCE(p.s, 0) AS owe FROM orders o LEFT JOIN paid p ON p.order_id = o.order_id
+      WHERE COALESCE(o.status, '') <> 'huy' AND o.order_date < {P1.end} AND COALESCE(o.payment_method, '') <> 'cod'
+    )
+    SELECT
+      COALESCE(SUM(CASE WHEN ({P1.last} - order_date) BETWEEN 0 AND 7 THEN owe END), 0),
+      COALESCE(SUM(CASE WHEN ({P1.last} - order_date) BETWEEN 8 AND 15 THEN owe END), 0),
+      COALESCE(SUM(CASE WHEN ({P1.last} - order_date) > 15 THEN owe END), 0)
+    FROM d WHERE owe > 0
+
+- q: "het ngay 25/05/2026, so hang con trong kho dang bao nhieu tien, tinh theo gia von do"
+  type: number
+  periods: ["P1 = until_today"]
+  requires: [stock, products.cost]
+  absent: [ledger]
+  sql: |
+    -- tồn hết hôm nay × giá vốn trong danh mục hàng; chỉ tính hàng còn tồn
+    SELECT COALESCE(SUM(s.stock_qty * p.cost), 0) FROM stock s JOIN products p ON p.product_id = s.product_id WHERE s.stock_qty > 0
+
+- q: "Hết ngày 28/06/2026, số hàng còn trong kho đáng bao nhiêu tiền, tính theo giá vốn?"
+  type: number
+  periods: ["P1 = until_today"]
+  requires: [ledger, products.cost]
+  sql: |
+    -- tồn tại cuối ngày = balance của giao dịch kho cuối cùng của từng mặt hàng
+    SELECT COALESCE(SUM(b.balance * p.cost), 0)
+    FROM (SELECT product_id, balance, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY ts DESC, txn_id DESC) AS rn
+          FROM ledger WHERE {P1:ts}) b
+    JOIN products p ON p.product_id = b.product_id
+    WHERE b.rn = 1 AND b.balance > 0
+
+- q: "Lô Oresol 245 DHG hộp 20 gói gần hết hạn nhất có hạn dùng ngày nào?"
+  type: date
+  periods: ["P1 = until_today"]
+  entities: ["mặt hàng: 'Oresol 245 DHG hộp 20 gói' → cột product_name"]
+  requires: [lots, lot_sales]
+  sql: |
+    -- lô còn tồn (nhập - bán + khách trả về lô) và chưa quá hạn tại hôm nay, hạn sớm nhất
+    WITH rem AS (
+      SELECT l.lot, l.expiry, l.qty_base - COALESCE(s.sold, 0) AS left_qty
+      FROM lots l LEFT JOIN (SELECT lot, SUM(qty_base - COALESCE(return_qty_base, 0)) AS sold FROM lot_sales GROUP BY lot) s ON s.lot = l.lot
+      WHERE l.product_name = 'Oresol 245 DHG hộp 20 gói'
+    )
+    SELECT MIN(expiry) FROM rem WHERE left_qty > 0 AND expiry >= {P1.last}
+
+- q: "tiền vốn đang nằm ở các lô còn tồn có hạn dùng trong 90 ngày tới là bnhiu vậy"
+  type: number
+  periods: ["P1 = ahead:90"]
+  requires: [lots, lot_sales]
+  sql: |
+    -- tiền vốn = phần còn tồn của lô × giá nhập của chính lô (theo đơn vị cơ bản)
+    WITH rem AS (
+      SELECT l.lot, l.expiry, l.unit_cost_base, l.qty_base - COALESCE(s.sold, 0) AS left_qty
+      FROM lots l LEFT JOIN (SELECT lot, SUM(qty_base - COALESCE(return_qty_base, 0)) AS sold FROM lot_sales GROUP BY lot) s ON s.lot = l.lot
+    )
+    SELECT COALESCE(SUM(left_qty * unit_cost_base), 0) FROM rem WHERE left_qty > 0 AND {P1:expiry}
+
+- q: "Cho hỏi doanh thu dịp Tết năm nay thay đổi bao nhiêu % so với dịp Tết năm ngoái?"
+  type: percent
+  periods: ["P1 = tet:2026", "P2 = tet:2025"]
+  requires: [valid_lines]
+  sql: |
+    -- "Hôm nay" nằm trong năm 2026 nên Tết năm nay = tet:2026, Tết năm ngoái = tet:2025
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0)
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b
+
+- q: "doanh thu Tết 2026 so với trước Tết thay đổi bao nhiêu %"
+  type: percent
+  periods: ["P1 = tet:2026", "P2 = prev(P1)"]
+  requires: [valid_lines]
+  sql: |
+    -- prev(tet) = cùng số ngày ngay trước 23 tháng Chạp
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0)
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b
+
+- q: "Trong tháng 5/2025, doanh thu ca chiều hơn hay kém ca sáng bao nhiêu phần trăm vậy?"
+  type: percent
+  periods: ["P1 = month:2025-05"]
+  requires: [valid_lines]
+  sql: |
+    -- so ca chiều với ca sáng: mốc là ca sáng → (chiều - sáng) / sáng
+    SELECT 100.0 * (c.s - m.s) / NULLIF(m.s, 0)
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date} AND {SHIFT:ca_chieu:order_ts}) c,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date} AND {SHIFT:ca_sang:order_ts}) m
+
+- q: "Tuần trước số đơn ca chiều chênh ca sáng bao nhiêu phần trăm?"
+  type: percent
+  periods: ["P1 = last_week"]
+  requires: [valid_orders]
+  sql: |
+    SELECT 100.0 * (c.n - m.n) / NULLIF(m.n, 0)
+    FROM (SELECT COUNT(*) AS n FROM valid_orders WHERE {P1:order_date} AND {SHIFT:ca_chieu:order_ts}) c,
+         (SELECT COUNT(*) AS n FROM valid_orders WHERE {P1:order_date} AND {SHIFT:ca_sang:order_ts}) m
+
+- q: "Xem giúp doanh thu ngày nào cao nhất trong tháng 5 năm 2026?"
+  type: date
+  periods: ["P1 = month:2026-05"]
+  absent: [valid_lines]
+  requires: [valid_orders]
+  sql: |
+    SELECT order_date FROM valid_orders WHERE {P1:order_date}
+    GROUP BY order_date ORDER BY SUM(revenue) DESC, order_date LIMIT 1
+
+- q: "Kể từ khi Decolgen Forte hộp 30 vỉ x 4 viên lên giá 1.400 đồng/viên, 14 ngày đầu bán được nhiều hay ít hơn 14 ngày liền trước đó bao nhiêu phần trăm, tính theo số viên?"
+  type: percent
+  periods: []
+  entities: ["mặt hàng: 'Decolgen Forte hộp 30 vỉ x 4 viên' → cột product_name"]
+  requires: [prices, valid_lines]
+  sql: |
+    -- câu hỏi không nêu ngày tăng giá: lấy từ bảng prices. Lần tăng giá = giá mới cao hơn giá liền trước;
+    -- tăng lên cùng một giá nhiều lần thì lấy lần đầu. Cộng/trừ ngày trên cột dữ liệu: d + 14, d - 14.
+    WITH ch AS (
+      SELECT effective_date, new_price, LAG(new_price) OVER (PARTITION BY product_name ORDER BY effective_date) AS prev_price
+      FROM prices WHERE product_name = 'Decolgen Forte hộp 30 vỉ x 4 viên'
+    ), hike AS (SELECT MIN(effective_date) AS d FROM ch WHERE new_price = 1400 AND prev_price < new_price)
+    SELECT 100.0 * (SUM(CASE WHEN l.order_date >= h.d AND l.order_date < h.d + 14 THEN l.qty_base END)
+                  - SUM(CASE WHEN l.order_date >= h.d - 14 AND l.order_date < h.d THEN l.qty_base END))
+           / NULLIF(SUM(CASE WHEN l.order_date >= h.d - 14 AND l.order_date < h.d THEN l.qty_base END), 0)
+    FROM valid_lines l, hike h WHERE l.product_name = 'Decolgen Forte hộp 30 vỉ x 4 viên'
+
+- q: "cho tôi dthu của tháng 1/2026, tháng 2/2026 và tháng 3/2026, ghi lần lượt theo thứ tự đó"
+  type: list
+  periods: ["P1 = month:2026-01", "P2 = month:2026-02", "P3 = month:2026-03"]
+  requires: [valid_lines]
+  sql: |
+    -- nhiều số theo thứ tự câu hỏi = TYPE list, MỘT dòng, mỗi số một cột
+    SELECT (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P1:order_date}),
+           (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P2:order_date}),
+           (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P3:order_date})

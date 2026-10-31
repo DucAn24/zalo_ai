@@ -69,7 +69,7 @@ COL_DOC = {
 
 HIDE_COLS = {"status_raw", "payment_method_raw", "src", "product_name_raw", "n_lines", "net_line_amount", "has_return_line",
              "cost_amount", "branch_id", "shift_id", "promo_code", "einvoice_status", "customer_name_clean", "customer_id_raw",
-             "lines_total", "note", "unit_cost_base", "txn_id", "doc_id", "doc_type", "txn_type"}
+             "lines_total", "note", "unit_cost_base", "doc_id", "doc_type"}
 ALWAYS_COLS = {"is_item", "revenue", "order_date", "order_ts", "is_walkin", "customer_key", "customer_display",
                "group_name", "status", "is_cancelled", "has_return"}
 ENUM_COLS = {"status": 8, "payment_method": 10, "channel": 20, "customer_group": 20, "group_name": 60, "base_unit": 25,
@@ -224,6 +224,9 @@ Quy tắc SQL:
 - Tên mặt hàng/nhóm/khách/kênh: sao chép NGUYÊN VĂN giá trị trong phần "Thực thể nhận diện" hoặc danh sách giá trị ở trên.
 - string/list: trả về tên (không kèm nhãn). Tiền là số nguyên VND. Phần trăm là số phần trăm (12.5), giảm thì âm.
 - list trả nhiều số: một dòng, mỗi số một cột theo đúng thứ tự câu hỏi; list tên: mỗi tên một dòng đã sắp thứ tự.
+- Cộng/trừ ngày: chỉ cộng/trừ số ngày trên mốc có sẵn, ví dụ {{P1.last}} - order_date (ra số ngày), order_date + 14. Không dùng INTERVAL/current_date.
+- "A thay đổi bao nhiêu % so với B" = (A - B) / B (mốc là B); "so ca chiều với ca sáng" thì mốc là ca sáng.
+- Câu không nêu ngày của một sự kiện (ví dụ ngày tăng giá): tìm ngày đó trong bảng dữ liệu (prices) rồi tính bằng SQL.
 - Nếu dữ liệu không có thông tin cần để trả lời (xem mục "Lưu ý"), hoặc câu hỏi mang tính đánh giá chủ quan: TYPE: unanswerable.
 """
 

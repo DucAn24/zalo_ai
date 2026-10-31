@@ -123,6 +123,8 @@ def main():
     ap.add_argument("--sample", type=int, help="balanced subset size (per business)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--penalty", type=float, help="override PA penalty (default from config)")
+    ap.add_argument("--only-pred", action="store_true",
+                    help="score only the questions present in --pred (a run on a sample); avoids counting unrun questions as abstain")
     a = ap.parse_args()
 
     cfg = load_config()
@@ -141,6 +143,8 @@ def main():
     if not pred_path:
         sys.exit("give --pred or --run")
     preds = {p["id"]: p for p in load_jsonl(pred_path) if "id" in p}
+    if a.only_pred:
+        qs = [q for q in qs if q["id"] in preds]
     logs = {}
     if logs_dir and os.path.exists(os.path.join(logs_dir, "logs.jsonl")):
         logs = {x["id"]: x for x in load_jsonl(os.path.join(logs_dir, "logs.jsonl")) if "id" in x}

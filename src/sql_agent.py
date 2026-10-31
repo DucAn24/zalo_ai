@@ -101,6 +101,9 @@ class SQLAgent:
         if t in ("number", "percent", "string", "date", "boolean"):
             if len(df) == 0:
                 raise FormatError("truy vấn không trả về dòng nào (hãy dùng COALESCE(SUM(...), 0) nếu kết quả hợp lệ là 0)")
+            if df.shape != (1, 1):
+                raise FormatError(f"kết quả có {df.shape[0]} dòng × {df.shape[1]} cột nhưng TYPE {t} cần đúng 1 giá trị. "
+                                  "Nhiều số theo thứ tự câu hỏi → TYPE: list (một dòng, mỗi số một cột); nhiều đối tượng → list hoặc table")
             v = df.iat[0, 0]
             if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
                 raise FormatError("kết quả là NULL (không có dòng nào khớp điều kiện; kiểm tra lại điều kiện lọc/tên thực thể)")
@@ -150,8 +153,12 @@ class SQLAgent:
                 return s
             if attempt == self.max_retries:
                 break
-            fix = (f"Lỗi: {trace['error']}\nHãy sửa và trả lời lại đúng định dạng (TYPE/PERIODS/SQL), "
+            err = trace["error"]
+            fix = (f"Lỗi: {err}\nHãy sửa và trả lời lại đúng định dạng (TYPE/PERIODS/SQL), "
                    f"chỉ dùng bảng/cột có trong danh sách.")
+            if re.search(r"not found|does not exist|không trả về dòng|NULL", err, re.I):
+                fix += ("\nNếu thông tin câu hỏi cần KHÔNG được dữ liệu ghi (xem mục 'Lưu ý' và danh sách bảng/cột), "
+                        "đừng bịa cột/bảng: trả TYPE: unanswerable kèm REASON.")
             msgs = msgs + [{"role": "assistant", "content": text}, {"role": "user", "content": fix}]
             try:
                 text = self.llm.chat(msgs, n=1, temperature=0.0)[0]
