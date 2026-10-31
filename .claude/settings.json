@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m src.main:*)",
+      "Bash(python eval.py:*)",
+      "Bash(python tools/*:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "Read(./private_test/**/answers*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ]
+  },
+  "env": {
+    "PYTHONHASHSEED": "0"
+  }
+}
