@@ -1,5 +1,12 @@
 train/
-
-
-
-
+public_test/
+private_test/
+.venv/
+cache/
+result/
+runs/
+models/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.parquet

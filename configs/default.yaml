@@ -1,0 +1,31 @@
+# Default configuration. Every key can be overridden by an environment variable (see src/config.py).
+paths:
+  data_dir: /data                 # DATA_DIR   (split folder: data/, rulebook.md, calendar.csv, questions.jsonl)
+  result_dir: /result             # RESULT_DIR (submission.jsonl + logs/)
+  cache_dir: /tmp/datamate_cache  # CACHE_DIR  (canonical tables cache; must be writable)
+
+llm:
+  base_url: http://localhost:8000/v1   # LLM_BASE_URL (vLLM / Ollama / llama.cpp, OpenAI-compatible)
+  model: Qwen/Qwen3-8B-AWQ             # LLM_MODEL
+  api_key: EMPTY                       # LLM_API_KEY
+  temperature: 0.0
+  seed: 42
+  max_tokens: 1024
+  disable_thinking: true               # chat_template_kwargs.enable_thinking=false, fallback '/no_think'
+  request_timeout: 120
+
+sql:
+  timeout_s: 20
+  max_retries: 2
+
+decide:
+  # Penalized Accuracy: correct +1, wrong -penalty, abstain 0 (rulebook §9 of train says penalty = 1).
+  penalty: 1.0                         # PA_PENALTY
+  # Answer when the estimated probability of being right is >= threshold.
+  # 'auto' = penalty / (1 + penalty)  (0.5 for penalty 1).
+  answer_threshold: auto               # ANSWER_THRESHOLD
+  n_samples: 1                         # self-consistency samples (1 = off)
+
+run:
+  workers: 8                           # concurrent questions (LLM requests in flight)
+  time_budget_s: 20400                 # 5h40m: stop starting new questions after this

@@ -1,0 +1,11 @@
+# runtime (inference). The LLM server (vLLM) is installed separately in the Docker image.
+pandas==3.1.0
+numpy==2.5.4
+duckdb==2.0.0
+python-calamine==0.9.0
+openpyxl==3.1.5
+PyYAML==6.0.3
+RapidFuzz==3.14.6
+scikit-learn==1.9.1
+# dev
+pytest==9.2.0

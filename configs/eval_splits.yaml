@@ -1,0 +1,15 @@
+# Evaluation-only labels. The pipeline NEVER reads this file.
+# Types were labeled by looking at product names; they only drive validation splits.
+business_types:
+  tap_hoa: [biz_101, biz_102, biz_103, biz_107, biz_108, biz_109]
+  ca_phe: [biz_104, biz_105, biz_106, biz_111, biz_112]
+  vat_lieu_xay_dung: [biz_113, biz_114, biz_115, biz_116, biz_117, biz_118]
+  nha_thuoc: [biz_119, biz_120, biz_121, biz_122, biz_123, biz_124]
+  nha_hang: [biz_125, biz_126, biz_127, biz_128, biz_129, biz_130]
+  khong_ro: [biz_110]
+
+# Whole business types kept out of design (prompts, few-shot pool, rules, column vocabulary).
+holdout_types: [vat_lieu_xay_dung, nha_hang]
+
+# Single businesses of the design types kept out as "seen type, unseen business".
+holdout_businesses: [biz_103, biz_106, biz_122]
