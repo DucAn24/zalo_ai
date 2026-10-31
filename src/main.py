@@ -35,6 +35,8 @@ log = logging.getLogger("datamate")
 
 def find_split_dir(root: str) -> str:
     """The test folder may be /data itself or a sub-folder holding questions.jsonl (depth <= 2)."""
+    if not os.path.isdir(root):
+        raise FileNotFoundError(f"data folder not found: {root} (upload/unzip the split there, or pass --data)")
     if os.path.exists(os.path.join(root, "questions.jsonl")):
         return root
     for d1 in sorted(os.listdir(root)):
