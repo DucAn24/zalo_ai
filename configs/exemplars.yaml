@@ -1,0 +1,447 @@
+# Few-shot exemplars written against the CANONICAL schema (valid_orders, valid_lines, ...), not a
+# specific shop. Retrieval (TF-IDF on the question) picks the closest ones among those whose
+# `requires` tables/columns exist for the shop (`absent`: tables that must NOT exist).
+# Dates are never written by hand: periods are declared in `periods` and referenced as {P1:col},
+# {P1.start}, {P1.end} (exclusive), {P1.last}; shifts as {SHIFT:ca_chieu:col}.
+# Only intent families seen in the dev group were used to write these.
+
+- q: "Doanh thu tháng 10/2025 là bao nhiêu?"
+  type: number
+  periods: ["P1 = month:2025-10"]
+  requires: [valid_lines]
+  sql: |
+    SELECT COALESCE(SUM(line_amount), 0) AS doanh_thu
+    FROM valid_lines
+    WHERE {P1:order_date}
+
+- q: "tổng doanh thu hôm qua là bn"
+  type: number
+  periods: ["P1 = yesterday"]
+  absent: [valid_lines]
+  requires: [valid_orders]
+  sql: |
+    SELECT COALESCE(SUM(revenue), 0) AS doanh_thu
+    FROM valid_orders
+    WHERE {P1:order_date}
+
+- q: "7 ngày gần nhất cửa hàng bán được bao nhiêu tiền"
+  type: number
+  periods: ["P1 = last_n_days:7"]
+  requires: [valid_lines]
+  sql: |
+    SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P1:order_date}
+
+- q: "Hôm qua cửa hàng bán được mấy đơn?"
+  type: number
+  periods: ["P1 = yesterday"]
+  requires: [valid_orders]
+  sql: |
+    SELECT COUNT(*) AS so_don FROM valid_orders WHERE {P1:order_date}
+
+- q: "Trong tháng 4/2025, cửa hàng có mấy đơn ở trạng thái huỷ nhỉ?"
+  type: number
+  periods: ["P1 = month:2025-04"]
+  requires: [orders]
+  sql: |
+    SELECT COUNT(*) FROM orders WHERE status = 'huy' AND {P1:order_date}
+
+- q: "tỉ lệ huỷ đơn tháng 3/2026 là bao nhiêu %"
+  type: percent
+  periods: ["P1 = month:2026-03"]
+  requires: [orders]
+  sql: |
+    SELECT 100.0 * SUM(CASE WHEN status = 'huy' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0) AS ti_le_huy
+    FROM orders
+    WHERE {P1:order_date}
+
+- q: "So với tháng trước đó, doanh thu tháng 6/2025 tăng hay giảm mấy phần trăm?"
+  type: percent
+  periods: ["P1 = month:2025-06", "P2 = prev(P1)"]
+  requires: [valid_lines]
+  sql: |
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0) AS thay_doi
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b
+
+- q: "tháng 2/2026 doanh thu thay đổi bao nhiêu % so với tháng liền trước"
+  type: percent
+  periods: ["P1 = month:2026-02", "P2 = prev(P1)"]
+  absent: [valid_lines]
+  requires: [valid_orders]
+  sql: |
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0)
+    FROM (SELECT SUM(revenue) AS s FROM valid_orders WHERE {P1:order_date}) a,
+         (SELECT SUM(revenue) AS s FROM valid_orders WHERE {P2:order_date}) b
+
+- q: "từ đầu tháng này đến hết hôm nay, doanh thu tăng hay giảm bao nhiêu % so với cùng kỳ tháng trước"
+  type: percent
+  periods: ["P1 = this_month", "P2 = prev(P1)"]
+  requires: [valid_lines]
+  sql: |
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0)
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b
+
+- q: "doanh thu quý 3 năm 2025 so với cùng kỳ năm trước thay đổi bao nhiêu %"
+  type: percent
+  periods: ["P1 = quarter:2025-Q3", "P2 = yoy(P1)"]
+  requires: [valid_lines]
+  sql: |
+    SELECT 100.0 * (a.s - b.s) / NULLIF(b.s, 0)
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b
+
+- q: "Liệt kê 5 mặt hàng bán chạy nhất tháng 12/2025"
+  type: list
+  periods: ["P1 = month:2025-12"]
+  requires: [valid_lines]
+  sql: |
+    SELECT product_name
+    FROM valid_lines
+    WHERE {P1:order_date} AND is_item
+    GROUP BY product_id, product_name
+    ORDER BY SUM(qty_base) DESC, product_id, product_name
+    LIMIT 5
+
+- q: "tuần rồi hàng nào chạy nhất"
+  type: string
+  periods: ["P1 = last_week"]
+  requires: [valid_lines]
+  sql: |
+    SELECT product_name
+    FROM valid_lines
+    WHERE {P1:order_date} AND is_item
+    GROUP BY product_id, product_name
+    ORDER BY SUM(qty_base) DESC, product_id, product_name
+    LIMIT 1
+
+- q: "Liệt kê 3 khách chi tiêu nhiều nhất trong tháng 6 năm 2025."
+  type: list
+  periods: ["P1 = month:2025-06"]
+  requires: [valid_orders]
+  sql: |
+    SELECT customer_display
+    FROM valid_orders
+    WHERE {P1:order_date} AND NOT is_walkin
+    GROUP BY customer_key, customer_display
+    ORDER BY SUM(revenue) DESC, customer_key
+    LIMIT 3
+
+- q: "khách mua nhiều đơn nhất tháng 12/2025 là ai"
+  type: string
+  periods: ["P1 = month:2025-12"]
+  requires: [valid_orders]
+  sql: |
+    SELECT customer_display
+    FROM valid_orders
+    WHERE {P1:order_date} AND NOT is_walkin
+    GROUP BY customer_key, customer_display
+    ORDER BY COUNT(*) DESC, customer_key
+    LIMIT 1
+
+- q: "top 3 khách có công nợ lớn nhất đến hết ngày 14/08/2026 và số nợ của từng người"
+  type: table
+  periods: ["P1 = until:2026-08-14"]
+  columns: [khach_hang, so_tien_no]
+  requires: [orders, payments]
+  sql: |
+    WITH paid AS (
+      SELECT order_id, SUM(pay_amount) AS paid FROM payments WHERE pay_date < {P1.end} GROUP BY order_id
+    ), d AS (
+      SELECT o.customer_key, o.customer_display, o.total_payable - COALESCE(p.paid, 0) AS owe
+      FROM orders o LEFT JOIN paid p ON p.order_id = o.order_id
+      WHERE COALESCE(o.status, '') <> 'huy' AND o.order_date < {P1.end} AND NOT o.is_walkin
+        AND COALESCE(o.payment_method, '') <> 'cod'
+        -- bỏ cả kênh sàn TMĐT nếu rulebook nói đơn qua sàn không phải khách nợ
+    )
+    SELECT customer_display AS khach_hang, SUM(owe) AS so_tien_no
+    FROM d WHERE owe > 0
+    GROUP BY customer_key, customer_display
+    ORDER BY so_tien_no DESC, customer_key
+    LIMIT 3
+
+- q: "liệt kê 3 khách nợ nhiều nhất tính đến hết ngày 24/06/2026, kèm số tiền còn nợ"
+  type: table
+  periods: ["P1 = until:2026-06-24"]
+  columns: [khach_hang, so_tien_no]
+  requires: [orders]
+  absent: [payments]
+  sql: |
+    -- chỉ có cột debt_amount (nợ tại ngày cuối dữ liệu); đúng khi hôm nay = ngày cuối dữ liệu
+    SELECT customer_display AS khach_hang, SUM(debt_amount) AS so_tien_no
+    FROM orders
+    WHERE COALESCE(status, '') <> 'huy' AND NOT is_walkin AND debt_amount > 0
+    GROUP BY customer_key, customer_display
+    ORDER BY so_tien_no DESC, customer_key
+    LIMIT 3
+
+- q: "Tháng 8/2025 có bao nhiêu khách mua từ 12 đơn trở lên?"
+  type: number
+  periods: ["P1 = month:2025-08"]
+  requires: [valid_orders]
+  sql: |
+    SELECT COUNT(*) FROM (
+      SELECT customer_key FROM valid_orders
+      WHERE {P1:order_date} AND NOT is_walkin
+      GROUP BY customer_key HAVING COUNT(*) >= 12
+    )
+
+- q: "trong số khách đã mua tháng 7/2026, bao nhiêu % mua từ 8 đơn trở lên"
+  type: percent
+  periods: ["P1 = month:2026-07"]
+  requires: [valid_orders]
+  sql: |
+    SELECT 100.0 * COUNT(*) FILTER (WHERE n >= 8) / NULLIF(COUNT(*), 0)
+    FROM (SELECT customer_key, COUNT(*) AS n FROM valid_orders
+          WHERE {P1:order_date} AND NOT is_walkin GROUP BY customer_key)
+
+- q: "Tháng 9/2025 nhóm nước giải khát đóng góp bao nhiêu % doanh thu cả cửa hàng"
+  type: percent
+  periods: ["P1 = month:2025-09"]
+  entities: ["nhóm hàng: 'nước giải khát' → cột group_name"]
+  requires: [valid_lines, products.group_name]
+  sql: |
+    SELECT 100.0 * SUM(CASE WHEN group_name = 'nước giải khát' THEN line_amount ELSE 0 END) / NULLIF(SUM(line_amount), 0)
+    FROM valid_lines
+    WHERE {P1:order_date}
+
+- q: "Doanh thu nhóm hàng ho cảm cúm tháng 11 năm 2025 là bao nhiêu?"
+  type: number
+  periods: ["P1 = month:2025-11"]
+  entities: ["nhóm hàng: 'ho cảm cúm' → cột group_name"]
+  requires: [valid_lines, products.group_name]
+  sql: |
+    SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines
+    WHERE group_name = 'ho cảm cúm' AND {P1:order_date}
+
+- q: "tháng 4/2026 bán Bột ngọt Ajinomoto 400g được bao nhiêu tiền"
+  type: number
+  periods: ["P1 = month:2026-04"]
+  entities: ["mặt hàng: 'Bột ngọt Ajinomoto 400g' → cột product_name"]
+  requires: [valid_lines]
+  sql: |
+    SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines
+    WHERE product_name = 'Bột ngọt Ajinomoto 400g' AND {P1:order_date}
+
+- q: "thang 4/2026 hang nep cai hoa vang ban duoc tong cong bn kg"
+  type: number
+  periods: ["P1 = month:2026-04"]
+  entities: ["mặt hàng: 'Nếp cái hoa vàng' → cột product_name"]
+  requires: [valid_lines]
+  sql: |
+    -- số lượng quy về đơn vị cơ bản; chỉ tính mặt hàng có đơn vị cơ bản đúng là đơn vị được hỏi
+    SELECT COALESCE(SUM(qty_base), 0) FROM valid_lines
+    WHERE product_name = 'Nếp cái hoa vàng' AND base_unit = 'kg' AND {P1:order_date}
+
+- q: "Trong tháng 2/2025, số ly size L bán được là bao nhiêu, tính mọi loại đồ uống?"
+  type: number
+  periods: ["P1 = month:2025-02"]
+  requires: [valid_lines]
+  sql: |
+    SELECT COALESCE(SUM(qty_base), 0) FROM valid_lines
+    WHERE base_unit = 'ly' AND lower(product_name) LIKE '%(l)' AND {P1:order_date}
+
+- q: "Tháng 3/2025 ngày nào cửa hàng bán được nhiều tiền nhất?"
+  type: date
+  periods: ["P1 = month:2025-03"]
+  requires: [valid_lines]
+  sql: |
+    SELECT order_date FROM valid_lines
+    WHERE {P1:order_date}
+    GROUP BY order_date
+    ORDER BY SUM(line_amount) DESC, order_date
+    LIMIT 1
+
+- q: "xét 3 tháng 3/2025, 4/2025 và 5/2025, doanh thu tháng nào lớn nhất"
+  type: date
+  periods: ["P1 = month:2025-03", "P2 = month:2025-04", "P3 = month:2025-05"]
+  requires: [valid_lines]
+  sql: |
+    SELECT strftime(m, '%Y-%m') AS thang FROM (
+      SELECT {P1.start} AS m, (SELECT SUM(line_amount) FROM valid_lines WHERE {P1:order_date}) AS s
+      UNION ALL SELECT {P2.start}, (SELECT SUM(line_amount) FROM valid_lines WHERE {P2:order_date})
+      UNION ALL SELECT {P3.start}, (SELECT SUM(line_amount) FROM valid_lines WHERE {P3:order_date})
+    ) ORDER BY s DESC LIMIT 1
+
+- q: "doanh thu có tăng liên tục qua 3 tháng 4/2026, 5/2026, 6/2026 không?"
+  type: boolean
+  periods: ["P1 = month:2026-04", "P2 = month:2026-05", "P3 = month:2026-06"]
+  requires: [valid_lines]
+  sql: |
+    SELECT a.s < b.s AND b.s < c.s
+    FROM (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P1:order_date}) a,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P2:order_date}) b,
+         (SELECT SUM(line_amount) AS s FROM valid_lines WHERE {P3:order_date}) c
+
+- q: "Trung bình mỗi đơn tháng 5/2025 mang về bao nhiêu doanh thu?"
+  type: number
+  periods: ["P1 = month:2025-05"]
+  decimals: 0
+  requires: [valid_orders]
+  sql: |
+    SELECT SUM(revenue) * 1.0 / NULLIF(COUNT(*), 0) FROM valid_orders WHERE {P1:order_date}
+
+- q: "Tháng 6/2025 có bao nhiêu đơn hàng có doanh thu từ 270.000 đồng trở lên?"
+  type: number
+  periods: ["P1 = month:2025-06"]
+  requires: [valid_orders]
+  sql: |
+    SELECT COUNT(*) FROM valid_orders WHERE {P1:order_date} AND revenue >= 270000
+
+- q: "dthu ca chiều tháng 7/2026 là bao nhiêu?"
+  type: number
+  periods: ["P1 = month:2026-07"]
+  requires: [valid_lines]
+  sql: |
+    SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines
+    WHERE {P1:order_date} AND {SHIFT:ca_chieu:order_ts}
+
+- q: "tuan roi ca sang co bao nhieu bill"
+  type: number
+  periods: ["P1 = last_week"]
+  requires: [valid_orders]
+  sql: |
+    SELECT COUNT(*) FROM valid_orders WHERE {P1:order_date} AND {SHIFT:ca_sang:order_ts}
+
+- q: "tháng này, dthu các đơn trả bằng cod và các đơn trả bằng tiền mặt mỗi loại bao nhiêu"
+  type: list
+  periods: ["P1 = this_month"]
+  requires: [valid_orders, payment_method]
+  sql: |
+    SELECT SUM(CASE WHEN payment_method = 'cod' THEN revenue ELSE 0 END),
+           SUM(CASE WHEN payment_method = 'tien_mat' THEN revenue ELSE 0 END)
+    FROM valid_orders WHERE {P1:order_date}
+
+- q: "doanh thu các đơn bán qua Zalo OA và các đơn bán tại quầy tháng này lần lượt là bao nhiêu"
+  type: list
+  periods: ["P1 = this_month"]
+  entities: ["kênh bán: 'zalo_oa' → cột channel", "kênh bán: 'store' → cột channel"]
+  requires: [valid_orders, channel]
+  sql: |
+    SELECT SUM(CASE WHEN channel = 'zalo_oa' THEN revenue ELSE 0 END),
+           SUM(CASE WHEN channel = 'store' THEN revenue ELSE 0 END)
+    FROM valid_orders WHERE {P1:order_date}
+
+- q: "Tháng này, doanh thu từ khách nhóm thân thiết chiếm bao nhiêu phần trăm tổng doanh thu của cửa hàng vậy?"
+  type: percent
+  periods: ["P1 = this_month"]
+  requires: [valid_orders, customer_group]
+  sql: |
+    -- đơn khách lẻ không thuộc nhóm nào nhưng vẫn nằm trong mẫu số
+    SELECT 100.0 * SUM(CASE WHEN customer_group = 'thân thiết' THEN revenue ELSE 0 END) / NULLIF(SUM(revenue), 0)
+    FROM valid_orders WHERE {P1:order_date}
+
+- q: "ai là nhân viên bán giỏi nhất tháng 7/2025"
+  type: string
+  periods: ["P1 = month:2025-07"]
+  requires: [valid_orders, employee_id]
+  sql: |
+    SELECT employee_id FROM valid_orders
+    WHERE {P1:order_date} AND employee_id IS NOT NULL
+    GROUP BY employee_id ORDER BY SUM(revenue) DESC, employee_id LIMIT 1
+
+- q: "tháng 10/2025 lời gộp của cửa hàng là bao nhiêu"
+  type: number
+  periods: ["P1 = month:2025-10"]
+  requires: [valid_lines, cost_unit]
+  sql: |
+    -- giá vốn ghi trên dòng bán là giá cho một đơn vị bán
+    SELECT COALESCE(SUM(line_amount - qty * cost_unit), 0) FROM valid_lines WHERE {P1:order_date}
+
+- q: "Tháng này tổng giá trị các phiếu nhập hàng là bao nhiêu"
+  type: number
+  periods: ["P1 = this_month"]
+  requires: [imports]
+  sql: |
+    SELECT COALESCE(SUM(import_total), 0) FROM imports WHERE NOT is_cancelled AND {P1:import_date}
+
+- q: "Tháng 1/2025 cửa hàng nhập nhiều tiền hàng nhất từ nhà cung cấp nào?"
+  type: string
+  periods: ["P1 = month:2025-01"]
+  requires: [imports]
+  sql: |
+    SELECT COALESCE(supplier_name, supplier_id) FROM imports
+    WHERE NOT is_cancelled AND {P1:import_date}
+    GROUP BY supplier_id, supplier_name ORDER BY SUM(import_total) DESC, supplier_id LIMIT 1
+
+- q: "trong tháng 6/2025, Yumangel hộp 20 gói nhập vào giá bình quân một hộp là bao nhiêu"
+  type: number
+  periods: ["P1 = month:2025-06"]
+  decimals: 0
+  entities: ["mặt hàng: 'Yumangel hộp 20 gói' → cột product_name"]
+  requires: [imports, import_lines]
+  sql: |
+    -- bình quân theo số lượng nhập, theo đơn vị nhập của dòng
+    SELECT SUM(l.line_amount) * 1.0 / NULLIF(SUM(l.qty), 0)
+    FROM import_lines l JOIN imports i ON i.import_id = l.import_id
+    WHERE NOT i.is_cancelled AND l.product_name = 'Yumangel hộp 20 gói' AND l.unit = 'hộp' AND {P1:i.import_date}
+
+- q: "Hết hôm nay, tồn kho Bia Tiger lon còn bao nhiêu lon?"
+  type: number
+  periods: ["P1 = until_today"]
+  entities: ["mặt hàng: 'Bia Tiger lon' → cột product_name"]
+  requires: [stock]
+  sql: |
+    -- stock là tồn cuối ngày cuối có dữ liệu; chỉ đúng khi hôm nay = ngày cuối dữ liệu
+    SELECT stock_qty FROM stock WHERE product_name = 'Bia Tiger lon'
+
+- q: "Hết hôm nay trong kho còn bao nhiêu thùng Coca Cola nguyên và bao nhiêu lon lẻ?"
+  type: list
+  periods: ["P1 = until_today"]
+  entities: ["mặt hàng: 'Coca Cola 330ml' → cột product_name"]
+  requires: [stock, unit_conv]
+  sql: |
+    SELECT CAST(floor(s.stock_qty / c.factor) AS BIGINT) AS nguyen,
+           CAST(s.stock_qty - floor(s.stock_qty / c.factor) * c.factor AS BIGINT) AS le
+    FROM stock s JOIN unit_conv c ON c.product_name = s.product_name AND c.unit = 'thùng'
+    WHERE s.product_name = 'Coca Cola 330ml'
+
+- q: "gia ban mot vien clarityne 10mg hop 1 vi x 10 vien vao ngay 14/06/2026 la bao nhiu"
+  type: number
+  periods: ["P1 = day:2026-06-14"]
+  entities: ["mặt hàng: 'Clarityne 10mg hộp 1 vỉ x 10 viên' → cột product_name"]
+  requires: [lines]
+  sql: |
+    -- đơn giá ghi trên dòng bán, quy về một đơn vị cơ bản, tính cả đơn huỷ/trả
+    SELECT mode(unit_price / factor) FROM lines
+    WHERE product_name = 'Clarityne 10mg hộp 1 vỉ x 10 viên' AND {P1:order_date}
+
+- q: "Xi măng INSEE lên giá 105.000đ từ ngày 30/01/2026; so 14 ngày kể từ ngày tăng giá với 14 ngày ngay trước, lượng bán tính theo bao tăng hay giảm bao nhiêu %?"
+  type: percent
+  periods: ["P1 = days_from:2026-01-30,14", "P2 = days_before:2026-01-30,14"]
+  entities: ["mặt hàng: 'Xi măng INSEE Power-S bao 50kg' → cột product_name"]
+  requires: [valid_lines]
+  sql: |
+    SELECT 100.0 * (a.q - b.q) / NULLIF(b.q, 0)
+    FROM (SELECT SUM(qty_base) AS q FROM valid_lines WHERE product_name = 'Xi măng INSEE Power-S bao 50kg' AND {P1:order_date}) a,
+         (SELECT SUM(qty_base) AS q FROM valid_lines WHERE product_name = 'Xi măng INSEE Power-S bao 50kg' AND {P2:order_date}) b
+
+- q: "Thuốc có hoạt chất Paracetamol tháng 4/2025 bán được tổng cộng bao nhiêu tiền?"
+  type: number
+  periods: ["P1 = month:2025-04"]
+  entities: ["hoạt chất: 'Paracetamol' → cột active_ingredient"]
+  requires: [valid_lines, products.active_ingredient]
+  sql: |
+    -- hoạt chất phải đúng nguyên giá trị (thuốc phối hợp là một loại riêng)
+    SELECT COALESCE(SUM(l.line_amount), 0)
+    FROM valid_lines l JOIN products p ON p.product_id = l.product_id
+    WHERE p.active_ingredient = 'Paracetamol' AND {P1:l.order_date}
+
+- q: "trong tổng doanh thu tháng 7/2025, phần của thuốc kê đơn là bao nhiêu phần trăm"
+  type: percent
+  periods: ["P1 = month:2025-07"]
+  requires: [valid_lines, products.is_rx]
+  sql: |
+    SELECT 100.0 * SUM(CASE WHEN COALESCE(p.is_rx, FALSE) THEN l.line_amount ELSE 0 END) / NULLIF(SUM(l.line_amount), 0)
+    FROM valid_lines l LEFT JOIN products p ON p.product_id = l.product_id
+    WHERE {P1:l.order_date}
+
+- q: "Cửa hàng có mấy khách nhà ở đường Hai Bà Trưng?"
+  type: unanswerable
+  periods: []
+  reason: "Dữ liệu không ghi địa chỉ khách."
+
+- q: "Nhân viên Phùng Thu Trang làm việc có tận tâm với khách không?"
+  type: unanswerable
+  periods: []
+  reason: "Không có thông tin đánh giá thái độ nhân viên trong dữ liệu."

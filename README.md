@@ -2,8 +2,26 @@
 
 Offline agent answering Vietnamese questions over small-business tables (CSV / Excel / SQLite).
 
-> Status: stage (a) done — data loading & cleaning, canonical tables, date resolution, formatter,
-> matcher, evaluation. LLM → SQL comes in stage (b); Docker / `predict.sh` in stage (d).
+> Status: stages (a) and (b) done — data cleaning, canonical tables, dates, formatter, matcher, eval,
+> and the LLM → SQL → DuckDB baseline (prompting, retry, abstain threshold, per-question logs).
+> Not yet scored with a real model (no GPU locally): run `notebooks/colab_eval.ipynb`. Docker / `predict.sh`: stage (d).
+
+## Pipeline per question
+1. `store`/`canon`: business tables cleaned once and cached; `views`: `valid_orders` / `valid_lines`
+   (not cancelled, not returned — rulebook §1) on top of the canonical tables.
+2. `qnorm`: telex-typo repair; `entities`: product / group / customer / channel names found in the question.
+3. `prompts`: system = rulebook (read at runtime) + schema of THIS shop + what the shop does not record;
+   few-shot = TF-IDF nearest exemplars from `configs/exemplars.yaml` that fit the shop's tables.
+4. `llm` → `protocol`: model writes `TYPE / PERIODS / SQL`; **dates are computed in code** (`dates`) and
+   substituted for `{P1:order_date}`; literal dates in SQL are rejected.
+5. `sandbox` runs the read-only SQL (timeout); `formatter` coerces the type; errors go back to the model
+   (max `sql.max_retries`). Periods fully outside the shop's data range → `unanswerable` by code.
+6. `decide`: answer if confidence ≥ threshold (`penalty / (1 + penalty)` by default), else `abstain`.
+7. `main`: appends to `submission.jsonl` + `logs/logs.jsonl` after every question (flush).
+
+Run: `python -m src.main --data /data --out /result` (needs an OpenAI-compatible server at `LLM_BASE_URL`).
+Eval: `python eval.py --split train/train --run --out runs/exp1 --group dev --sample 100`.
+No GPU? `python tools/fake_llm_server.py` serves a few canned templates to test the plumbing.
 
 ## Layout
 ```
@@ -19,12 +37,24 @@ src/
   store.py      per-business cache (memory + disk, invalidated by data / code changes)
   dates.py      period expressions -> half-open date ranges (rules parsed from rulebook.md at runtime)
   qnorm.py      question normalization (telex typo repair against a Vietnamese vocabulary)
+  rules.py      facts parsed from rulebook.md at runtime (non-item rows, date rules, compact prompt text)
+  views.py      valid_orders / valid_lines views
+  entities.py   entity linking (accent-insensitive, longest match, fuzzy fallback)
+  llm.py        OpenAI-compatible client (vLLM / Ollama / llama.cpp; thinking off, /no_think fallback)
+  prompts.py    schema description, capability notes, exemplar retrieval, message building
+  protocol.py   parse TYPE/PERIODS/SQL, expand period placeholders
+  sql_agent.py  draft -> run -> format -> retry; self-consistency voting
+  decide.py     answer / abstain by confidence threshold
+  main.py       pipeline runner with per-question flush and logs
   sandbox.py    read-only DuckDB with statement checks and timeout
   formatter.py  answer typing / rounding
   matcher.py    official matching rules + Penalized Accuracy
   evalsplit.py  validation groups (evaluation only)
 eval.py         scoring with breakdowns (group / type / category / business)
-tools/          oracle_check.py (canonical-layer validation), make_vocab_mask.py (strict eval)
+tools/          oracle_check.py (canonical-layer validation), make_vocab_mask.py (strict eval),
+                fake_llm_server.py (plumbing tests), build_vocab.py
+scripts/        start_vllm.sh
+notebooks/      colab_eval.ipynb (T4)
 configs/        default.yaml (paths, LLM, thresholds), eval_splits.yaml (evaluation only)
 tests/          pytest
 ```

@@ -116,3 +116,13 @@ def test_sql_and_shift_clause():
 def test_bad_expression():
     with pytest.raises(ValueError):
         R(D(2026, 1, 1)).resolve("next_century")
+
+
+def test_price_effect_and_expiry_windows():
+    r = R(D(2026, 5, 20))
+    a = r.resolve("days_from:2026-01-30,14")
+    b = r.resolve("days_before:2026-01-30,14")
+    assert (a.start, a.end) == (D(2026, 1, 30), D(2026, 2, 13))
+    assert (b.start, b.end) == (D(2026, 1, 16), D(2026, 1, 30))
+    c = r.resolve("ahead:90")   # today .. today+90 inclusive
+    assert (c.start, c.end) == (D(2026, 5, 20), D(2026, 8, 19))

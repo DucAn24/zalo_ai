@@ -241,6 +241,18 @@ class DateResolver:
     def until(self, d: D) -> Period:
         return Period(self.data_start, d + dt.timedelta(days=1), "until", f"until-{d.isoformat()}")
 
+    def days_from(self, d: D, n: int) -> Period:
+        """N days starting at d, d included."""
+        return Period(d, d + dt.timedelta(days=n), "ndays", f"{n}_days_from_{d}", n)
+
+    def days_before(self, d: D, n: int) -> Period:
+        """The N days right before d (d excluded)."""
+        return Period(d - dt.timedelta(days=n), d, "ndays", f"{n}_days_before_{d}", n)
+
+    def ahead(self, n: int) -> Period:
+        """From today through the end of day today+n (e.g. 'hết hạn trong N ngày tới')."""
+        return Period(self.today, self.today + dt.timedelta(days=n + 1), "range", f"ahead_{n}", n + 1)
+
     def range(self, a: D, b: D) -> Period:
         if b < a:
             a, b = b, a
@@ -332,6 +344,11 @@ class DateResolver:
             return self.year(int(arg))
         if name in ("last_n_days", "n_days"):
             return self.last_n_days(int(arg))
+        if name in ("days_from", "days_before"):
+            ds, n = [x.strip() for x in arg.split(",")][:2]
+            return (self.days_from if name == "days_from" else self.days_before)(D.fromisoformat(ds), int(n))
+        if name == "ahead":
+            return self.ahead(int(arg))
         if name == "range":
             a, b = [x.strip() for x in re.split(r"\.\.|,|/", arg) if x.strip()][:2]
             return self.range(D.fromisoformat(a), D.fromisoformat(b))

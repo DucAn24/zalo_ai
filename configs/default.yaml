@@ -13,6 +13,10 @@ llm:
   max_tokens: 1024
   disable_thinking: true               # chat_template_kwargs.enable_thinking=false, fallback '/no_think'
   request_timeout: 120
+  startup_wait_s: 900                  # wait this long for the LLM server before giving up
+
+prompt:
+  k_exemplars: 5                       # few-shot examples picked by TF-IDF similarity
 
 sql:
   timeout_s: 20
@@ -25,7 +29,10 @@ decide:
   # 'auto' = penalty / (1 + penalty)  (0.5 for penalty 1).
   answer_threshold: auto               # ANSWER_THRESHOLD
   n_samples: 1                         # self-consistency samples (1 = off)
+  sample_temperature: 0.6              # temperature when n_samples > 1
+  retry_confidence: 0.7                # confidence of an answer that needed a retry (n_samples = 1)
 
 run:
   workers: 8                           # concurrent questions (LLM requests in flight)
   time_budget_s: 20400                 # 5h40m: stop starting new questions after this
+  resume: false                        # true: skip ids already in submission.jsonl

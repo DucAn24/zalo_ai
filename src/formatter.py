@@ -65,8 +65,8 @@ def fmt_date(x: Any, month: bool = False) -> str:
     if isinstance(x, str):
         from .parse import parse_date
         s = x.strip()
-        if month and len(s) == 7 and s[4] == "-":
-            return s
+        if len(s) == 7 and s[4] == "-" and s[:4].isdigit() and s[5:].isdigit():
+            return s                      # already a 'yyyy-mm' month label
         d = parse_date(s)
         if d is None:
             raise FormatError(f"not a date: {x!r}")
@@ -164,10 +164,12 @@ def fmt_table(x: Any, columns: Optional[list[str]] = None, integer_cols: Optiona
 
 
 def format_answer(value: Any, atype: str, *, integer: Optional[bool] = None, month: bool = False,
-                  columns: Optional[list[str]] = None) -> dict:
-    """Return {'type', 'answer'} or raise FormatError."""
+                  columns: Optional[list[str]] = None, decimals: Optional[int] = None) -> dict:
+    """Return {'type', 'answer'} or raise FormatError. decimals=0 -> integer; decimals=k -> k digits."""
     if atype == "number":
-        return {"type": "number", "answer": fmt_number(_scalar(value), integer)}
+        if decimals == 0:
+            integer = True
+        return {"type": "number", "answer": fmt_number(_scalar(value), integer, decimals if decimals else 2)}
     if atype == "percent":
         return {"type": "percent", "answer": fmt_percent(_scalar(value))}
     if atype == "date":

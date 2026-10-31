@@ -76,12 +76,17 @@ def _prepare(df: pd.DataFrame, raw: bool = False) -> pd.DataFrame:
 
 
 class Sandbox:
-    def __init__(self, biz: Business, extra_sql: Optional[list[str]] = None, max_rows: int = 2000):
+    def __init__(self, biz: Business, extra_sql: Optional[list[str]] = None, max_rows: int = 2000,
+                 raw_other_only: bool = False, raw_kinds: Optional[dict] = None):
         self.biz = biz
         self.max_rows = max_rows
         self.con = duckdb.connect(":memory:")
         self.tables: dict[str, list[str]] = {}
-        for name, df in list(biz.tables.items()) + list(biz.raw.items()):
+        raw = biz.raw
+        if raw_other_only:      # raw copies are only a fallback for tables the mapper could not recognize
+            kinds = raw_kinds or biz.raw_kinds
+            raw = {k: v for k, v in raw.items() if kinds.get(k) == "other"}
+        for name, df in list(biz.tables.items()) + list(raw.items()):
             pdf = _prepare(df, raw=name.startswith("raw_"))
             self.con.register("_tmp_df", pdf)
             self.con.execute(f'CREATE TABLE "{name}" AS SELECT * FROM _tmp_df')
@@ -116,3 +121,13 @@ class Sandbox:
 
     def columns(self, table: str) -> list[str]:
         return self.tables.get(table, [])
+
+
+def describe_all(sb: "Sandbox") -> dict[str, list[tuple[str, str]]]:
+    """table/view -> [(column, type)] for everything in the main schema."""
+    rows = sb.con.execute("SELECT table_name, column_name, data_type FROM information_schema.columns "
+                          "WHERE table_schema = 'main' ORDER BY table_name, ordinal_position").fetchall()
+    out: dict[str, list[tuple[str, str]]] = {}
+    for t, c, d in rows:
+        out.setdefault(t, []).append((c, d))
+    return out
