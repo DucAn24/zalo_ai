@@ -82,3 +82,48 @@ def test_pipeline_end_to_end(split, tmp_path):
     assert len(logs) == 5 and all("elapsed_s" in x and "answer" in x for x in logs)
     assert any(len(s) > 1 for x in logs for s in x.get("attempts", []))     # a retry happened
     assert summary["questions"] == 5
+
+
+def test_failed_business_is_remembered_and_resume_redoes_only_crashed(split, tmp_path, monkeypatch):
+    import shutil
+    from src.main import Runtime
+    root, expected = split
+    shutil.copytree(root / "data" / "biz_900", root / "data" / "biz_901")
+    qs = [json.loads(l) for l in open(root / "questions.jsonl", encoding="utf-8") if l.strip()]
+    extra = [{"id": f"b{i}", "business_id": "biz_901", "question": "doanh thu tháng 1/2026 là bn", "as_of_date": "2026-03-01"}
+             for i in range(3)]
+    (root / "questions.jsonl").write_text("\n".join(json.dumps(q, ensure_ascii=False) for q in qs + extra), encoding="utf-8")
+
+    srv, port = serve(0)
+    cfg = load_config(overrides={"paths.cache_dir": str(tmp_path / "cache"), "run.workers": 2,
+                                 "llm.base_url": f"http://127.0.0.1:{port}/v1", "llm.startup_wait_s": 10})
+    out = tmp_path / "out"
+    real = Runtime._build_biz
+    calls = {"bad": 0}
+
+    def flaky(self, biz_id):
+        if biz_id == "biz_901":
+            calls["bad"] += 1
+            raise ValueError("boom")
+        return real(self, biz_id)
+
+    try:
+        monkeypatch.setattr(Runtime, "_build_biz", flaky)
+        run_pipeline(str(root), str(out), cfg=cfg)
+        assert calls["bad"] == 1                                    # remembered: not rebuilt for every question
+        sub1 = {json.loads(l)["id"]: json.loads(l) for l in open(out / "submission.jsonl", encoding="utf-8")}
+        assert all(sub1[f"b{i}"]["type"] == "abstain" for i in range(3))
+        assert sub1["q1"]["answer"] == expected["2026-01"]
+        monkeypatch.setattr(Runtime, "_build_biz", real)            # the bug is fixed; resume the run
+        cfg2 = load_config(overrides={**{"paths.cache_dir": str(tmp_path / "cache"), "run.workers": 2,
+                                         "llm.base_url": f"http://127.0.0.1:{port}/v1", "llm.startup_wait_s": 10},
+                                      "run.resume": True})
+        summary = run_pipeline(str(root), str(out), cfg=cfg2)
+    finally:
+        srv.shutdown()
+    assert summary["questions"] == 3                                # only the crashed ones were redone
+    lines = [json.loads(l) for l in open(out / "submission.jsonl", encoding="utf-8")]
+    assert len(lines) == len({x["id"] for x in lines}) == 8         # one line per question
+    final = {x["id"]: x for x in lines}
+    assert all(final[f"b{i}"]["answer"] == expected["2026-01"] for i in range(3))
+    assert final["q1"]["answer"] == expected["2026-01"]

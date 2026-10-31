@@ -82,6 +82,7 @@ class Runtime:
         self._biz: "collections.OrderedDict[str, BizRuntime]" = collections.OrderedDict()
         self._locks: dict[str, threading.Lock] = collections.defaultdict(threading.Lock)
         self._glock = threading.Lock()
+        self._failed: dict[str, Exception] = {}      # business build failures are remembered (no rebuild per question)
         self.max_biz = max_biz
 
     def biz(self, biz_id: str) -> BizRuntime:
@@ -94,26 +95,36 @@ class Runtime:
             with self._glock:
                 if biz_id in self._biz:
                     return self._biz[biz_id]
-            t0 = time.time()
-            B = self.store.get(biz_id)
-            sb = Sandbox(B, raw_other_only=True, raw_kinds=B.raw_kinds)
-            sb.add_views(build_views(B, self.rules.non_item_names))
-            ctx = build_context(B, sb, self.rules)
-            prod = B.tables.get("products")
-            if prod is not None:
-                self.qn.add_vocab(prod["product_name"].dropna().tolist())
-            br = BizRuntime(ctx, sb, B.flags.get("data_start"), B.flags.get("data_end"))
-            try:   # prime the server's prefix cache with this business's system prompt
-                self.llm.chat([{"role": "system", "content": ctx.system}, {"role": "user", "content": "OK?"}],
-                              max_tokens=1)
+            if biz_id in self._failed:
+                raise self._failed[biz_id]
+            try:
+                return self._build_biz(biz_id)
             except Exception as e:
-                log.warning("warm-up failed for %s: %s", biz_id, e)
-            log.info("business %s ready in %.1fs", biz_id, time.time() - t0)
-            with self._glock:
-                self._biz[biz_id] = br
-                while len(self._biz) > self.max_biz:
-                    self._biz.popitem(last=False)
-            return br
+                log.error("building business %s failed: %s\n%s", biz_id, e, traceback.format_exc())
+                self._failed[biz_id] = e
+                raise
+
+    def _build_biz(self, biz_id: str) -> BizRuntime:
+        t0 = time.time()
+        B = self.store.get(biz_id)
+        sb = Sandbox(B, raw_other_only=True, raw_kinds=B.raw_kinds)
+        sb.add_views(build_views(B, self.rules.non_item_names))
+        ctx = build_context(B, sb, self.rules)
+        prod = B.tables.get("products")
+        if prod is not None:
+            self.qn.add_vocab(prod["product_name"].dropna().tolist())
+        br = BizRuntime(ctx, sb, B.flags.get("data_start"), B.flags.get("data_end"))
+        try:   # prime the server's prefix cache with this business's system prompt
+            self.llm.chat([{"role": "system", "content": ctx.system}, {"role": "user", "content": "OK?"}],
+                          max_tokens=1)
+        except Exception as e:
+            log.warning("warm-up failed for %s: %s", biz_id, e)
+        log.info("business %s ready in %.1fs", biz_id, time.time() - t0)
+        with self._glock:
+            self._biz[biz_id] = br
+            while len(self._biz) > self.max_biz:
+                self._biz.popitem(last=False)
+        return br
 
     def process(self, q: dict) -> tuple[dict, dict]:
         t0 = time.time()
@@ -153,13 +164,20 @@ def run_pipeline(split_dir: str, out_dir: str, questions: Optional[list[dict]] =
     rt = Runtime(split_dir, cfg, llm)
     if not rt.llm.wait_ready(float(cfg.get("llm", {}).get("startup_wait_s", 600))):
         raise RuntimeError(f"LLM server not reachable at {rt.llm.base_url}")
-    done = set()
-    if os.path.exists(sub_path) and cfg.get("run", {}).get("resume", False):
-        with open(sub_path, encoding="utf-8") as f:
-            done = {json.loads(x)["id"] for x in f if x.strip()}
+    kept: list[tuple[str, str]] = []                            # (submission line, log line) already done and healthy
+    if os.path.exists(sub_path) and os.path.exists(log_path) and cfg.get("run", {}).get("resume", False):
+        with open(sub_path, encoding="utf-8") as f1, open(log_path, encoding="utf-8") as f2:
+            for a, b in zip(f1, f2):
+                try:
+                    sid, lgd = json.loads(a)["id"], json.loads(b)
+                except json.JSONDecodeError:
+                    continue
+                if lgd.get("id") == sid and "trace" not in lgd:   # entries with a crash trace are redone
+                    kept.append((a if a.endswith("\n") else a + "\n", b if b.endswith("\n") else b + "\n"))
+    done = {json.loads(a)["id"] for a, _ in kept}
     todo = [q for q in questions if q["id"] not in done]
     todo.sort(key=lambda q: (q["business_id"],))            # keep one business hot at a time
-    mode = "a" if done else "w"
+    log.info("resume: %d already done, %d to run", len(done), len(todo))
     lock = threading.Lock()
     budget = float(cfg["run"]["time_budget_s"])
     t_start = time.time()
@@ -178,7 +196,11 @@ def run_pipeline(split_dir: str, out_dir: str, questions: Optional[list[dict]] =
                 log.info("%d/%d done (%.0fs) %s", n, len(todo), time.time() - t_start, dict(counts))
         return sub
 
-    with open(sub_path, mode, encoding="utf-8") as fs, open(log_path, mode, encoding="utf-8") as fl:
+    with open(sub_path, "w", encoding="utf-8") as fs, open(log_path, "w", encoding="utf-8") as fl:
+        for a, b in kept:
+            fs.write(a)
+            fl.write(b)
+        fs.flush(); fl.flush()
         with cf.ThreadPoolExecutor(max_workers=int(cfg["run"]["workers"])) as ex:
             list(ex.map(work, todo))
     summary = {"questions": len(todo), "skipped_by_budget": len(todo) - sum(counts.values()),
@@ -196,6 +218,7 @@ def main(argv: Optional[list[str]] = None):
     ap.add_argument("--data", help="folder with the test split (default: $DATA_DIR)")
     ap.add_argument("--out", help="output folder (default: $RESULT_DIR)")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--biz", nargs="*", help="only these business ids")
     ap.add_argument("--config")
     a = ap.parse_args(argv)
     cfg = load_config(a.config)
@@ -204,7 +227,11 @@ def main(argv: Optional[list[str]] = None):
     out = a.out or cfg["paths"]["result_dir"]
     split = find_split_dir(root)
     log.info("split=%s out=%s model=%s url=%s", split, out, cfg["llm"]["model"], cfg["llm"]["base_url"])
-    run_pipeline(split, out, cfg=cfg, limit=a.limit)
+    qs = None
+    if a.biz:
+        with open(os.path.join(split, "questions.jsonl"), encoding="utf-8") as f:
+            qs = [q for q in (json.loads(x) for x in f if x.strip()) if q["business_id"] in a.biz]
+    run_pipeline(split, out, questions=qs, cfg=cfg, limit=a.limit)
 
 
 if __name__ == "__main__":

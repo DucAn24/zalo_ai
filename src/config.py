@@ -24,6 +24,7 @@ ENV_MAP = {
     "N_SAMPLES": ("decide", "n_samples"),
     "WORKERS": ("run", "workers"),
     "TIME_BUDGET_S": ("run", "time_budget_s"),
+    "RESUME": ("run", "resume"),
 }
 
 

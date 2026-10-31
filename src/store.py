@@ -13,7 +13,7 @@ from .canon import Business, CanonOptions, build_business
 
 log = logging.getLogger(__name__)
 
-_SRC_FILES = ["loader.py", "parse.py", "mapping.py", "schema.py", "canon.py", "readme.py", "textnorm.py"]
+_SRC_FILES = ["__init__.py", "loader.py", "parse.py", "mapping.py", "schema.py", "canon.py", "readme.py", "textnorm.py"]
 
 
 def code_version() -> str:
