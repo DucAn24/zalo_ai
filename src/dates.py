@@ -264,8 +264,8 @@ class DateResolver:
         if k == "day":
             return self.day(p.start - dt.timedelta(days=1))
         if k in ("week", "wtd"):
-            s = p.start - dt.timedelta(days=7)
-            return Period(s, s + dt.timedelta(days=p.days if k == "wtd" else 7), k, "prev_" + p.label)
+            s = p.start - dt.timedelta(days=7)         # always the whole previous week (Monday..Sunday)
+            return Period(s, s + dt.timedelta(days=7), "week", "prev_" + p.label)
         if k == "month":
             return self.month(*_add_months(p.start.year, p.start.month, -1))
         if k == "mtd":

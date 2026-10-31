@@ -126,3 +126,10 @@ def test_price_effect_and_expiry_windows():
     assert (b.start, b.end) == (D(2026, 1, 16), D(2026, 1, 30))
     c = r.resolve("ahead:90")   # today .. today+90 inclusive
     assert (c.start, c.end) == (D(2026, 5, 20), D(2026, 8, 19))
+
+
+def test_prev_of_partial_week_is_the_whole_previous_week():
+    r = R(D(2025, 5, 20))                         # Tuesday
+    assert rng(r.resolve("prev(this_week)")) == (D(2025, 5, 12), D(2025, 5, 19))
+    assert rng(r.resolve("last_week")) == (D(2025, 5, 12), D(2025, 5, 19))
+    assert rng(r.resolve("prev(last_week)")) == (D(2025, 5, 5), D(2025, 5, 12))

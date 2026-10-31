@@ -111,7 +111,9 @@ class Sandbox:
         except duckdb.InterruptException as e:
             raise SandboxError(f"timeout after {timeout}s") from e
         except duckdb.Error as e:
-            raise SandboxError(str(e).split("\n")[0][:500]) from e
+            lines = [x.strip() for x in str(e).split("\n") if x.strip() and not x.strip().startswith("LINE ")
+                     and set(x.strip()) != {"^"}]
+            raise SandboxError(" | ".join(lines)[:700]) from e
         finally:
             timer.cancel()
             cur.close()

@@ -31,6 +31,7 @@ decide:
   n_samples: 1                         # self-consistency samples (1 = off)
   sample_temperature: 0.6              # temperature when n_samples > 1
   retry_confidence: 0.7                # confidence of an answer that needed a retry (n_samples = 1)
+  retry_temperature: 0.5               # temperature of the 2nd+ retry (the 1st retry is greedy); seed stays fixed
 
 run:
   workers: 8                           # concurrent questions (LLM requests in flight)

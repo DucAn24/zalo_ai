@@ -70,6 +70,7 @@ class SQLAgent:
         self.k_ex = int(cfg.get("prompt", {}).get("k_exemplars", 5))
         self.sample_temp = float(cfg["decide"].get("sample_temperature", 0.6))
         self.retry_conf = float(cfg["decide"].get("retry_confidence", 0.7))
+        self.retry_temp = float(cfg["decide"].get("retry_temperature", 0.5))
 
     # ------------------------------------------------------------------ one draft
     def _execute(self, text: str, ctx: BizContext, sb: Sandbox, resolver: DateResolver,
@@ -163,12 +164,18 @@ class SQLAgent:
             err = trace["error"]
             fix = (f"Lỗi: {err}\nHãy sửa và trả lời lại đúng định dạng (TYPE/PERIODS/SQL), "
                    f"chỉ dùng bảng/cột có trong danh sách.")
+            if re.search(r"UNION", trace.get("sql", ""), re.I) and re.search(r"not found", err, re.I):
+                fix += ("
+Gợi ý: UNION ALL xếp các giá trị thành nhiều DÒNG của cùng một cột, nên không tham chiếu được tên cột "
+                        "của nhánh khác. Để so sánh nhiều kỳ hãy đặt mỗi kỳ là một subquery trong FROM: "
+                        "FROM (SELECT SUM(...) AS s FROM ... WHERE {P1:cột_ngày}) a, (SELECT ... {P2:cột_ngày}) b, ... "
+                        "rồi so a.s, b.s, c.s.")
             if re.search(r"not found|does not exist|không trả về dòng|NULL", err, re.I):
                 fix += ("\nNếu thông tin câu hỏi cần KHÔNG được dữ liệu ghi (xem mục 'Lưu ý' và danh sách bảng/cột), "
                         "đừng bịa cột/bảng: trả TYPE: unanswerable kèm REASON.")
             msgs = msgs + [{"role": "assistant", "content": text}, {"role": "user", "content": fix}]
             try:
-                text = self.llm.chat(msgs, n=1, temperature=0.0)[0]
+                text = self.llm.chat(msgs, n=1, temperature=0.0 if attempt == 0 else self.retry_temp)[0]
             except LLMError as e:
                 s.attempts.append({"error": f"LLM: {e}", "attempt": attempt + 1})
                 break
