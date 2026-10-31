@@ -439,6 +439,7 @@
 - q: "Cửa hàng có mấy khách nhà ở đường Hai Bà Trưng?"
   type: unanswerable
   periods: []
+  absent: [customers.address]
   reason: "Dữ liệu không ghi địa chỉ khách."
 
 - q: "Nhân viên Phùng Thu Trang làm việc có tận tâm với khách không?"
@@ -624,3 +625,28 @@
     SELECT (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P1:order_date}),
            (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P2:order_date}),
            (SELECT COALESCE(SUM(line_amount), 0) FROM valid_lines WHERE {P3:order_date})
+
+# ---- round 2 (verified on dev answers) ----
+- q: "Trong tháng 7 năm 2026, số sản phẩm xuất hiện ở từ 140 đơn hàng khác nhau trở lên là bao nhiêu?"
+  type: number
+  periods: ["P1 = month:2026-07"]
+  requires: [valid_lines]
+  sql: |
+    -- đếm số mặt hàng (không phải liệt kê): bọc truy vấn trong COUNT(*)
+    SELECT COUNT(*) FROM (
+      SELECT product_id, product_name FROM valid_lines
+      WHERE {P1:order_date} AND is_item
+      GROUP BY product_id, product_name HAVING COUNT(DISTINCT order_id) >= 140
+    )
+
+- q: "Tháng 11/2025 khách nam mua tổng cộng bao nhiêu tiền?"
+  type: unanswerable
+  periods: []
+  absent: [customers.gender]
+  reason: "Dữ liệu không ghi giới tính khách; không suy ra từ cột khác."
+
+- q: "Có bao nhiêu khách hàng ở đường Hậu Giang?"
+  type: unanswerable
+  periods: []
+  absent: [customers.address]
+  reason: "Dữ liệu không ghi địa chỉ khách."

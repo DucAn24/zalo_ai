@@ -215,6 +215,9 @@ day:YYYY-MM-DD, month:YYYY-MM, month:M (tháng không ghi năm), quarter:YYYY-Q1
 range:YYYY-MM-DD..YYYY-MM-DD (gồm hai đầu), until:YYYY-MM-DD (từ đầu dữ liệu đến hết ngày đó), until_today, tet:YYYY (mùa Tết năm YYYY), \
 days_from:YYYY-MM-DD,N (N ngày kể từ ngày đó, gồm ngày đó), days_before:YYYY-MM-DD,N (N ngày ngay trước), ahead:N (từ hôm nay đến hết ngày hôm nay+N), \
 prev(P1) (kỳ liền trước / cùng số ngày của kỳ trước), yoy(P1) (cùng kỳ năm ngoái). Dùng ngày ghi trong câu hỏi (dd/mm/yyyy → YYYY-MM-DD).
+Cách nói → biểu thức: hôm nay=today; hôm qua=yesterday; tuần này=this_week; tuần trước/tuần rồi=last_week (KHÔNG thêm prev); \
+tháng này=this_month; tháng trước/tháng rồi=last_month; từ đầu năm=this_year; "so với kỳ trước/tháng liền trước/trước đó"=prev(P1); \
+"cùng kỳ năm ngoái"=yoy(P1); "so với cùng kỳ tháng trước" (tháng này)=prev(this_month). prev(P) chỉ dùng cho kỳ SO SÁNH, kỳ chính của câu hỏi khai bình thường.
 Trong SQL: {{P1:cột_ngày}} thành điều kiện lọc cột ngày; {{P1.start}}, {{P1.end}} (không gồm), {{P1.last}}, {{P1.days}}; \
 {{SHIFT:ca_sang:cột_giờ}} / {{SHIFT:ca_chieu:cột_giờ}} cho ca. TUYỆT ĐỐI không viết ngày trực tiếp, không dùng current_date/INTERVAL.
 
@@ -227,6 +230,7 @@ Quy tắc SQL:
 - Cộng/trừ ngày: chỉ cộng/trừ số ngày trên mốc có sẵn, ví dụ {{P1.last}} - order_date (ra số ngày), order_date + 14. Không dùng INTERVAL/current_date.
 - "A thay đổi bao nhiêu % so với B" = (A - B) / B (mốc là B); "so ca chiều với ca sáng" thì mốc là ca sáng.
 - Câu không nêu ngày của một sự kiện (ví dụ ngày tăng giá): tìm ngày đó trong bảng dữ liệu (prices) rồi tính bằng SQL.
+- Chỉ lọc theo thông tin mà cột tương ứng thực sự ghi đúng nghĩa; KHÔNG suy ra từ cột khác (ví dụ không dùng nhóm khách để đoán giới tính). Thiếu thông tin → unanswerable.
 - Nếu dữ liệu không có thông tin cần để trả lời (xem mục "Lưu ý"), hoặc câu hỏi mang tính đánh giá chủ quan: TYPE: unanswerable.
 """
 
@@ -282,7 +286,7 @@ class ExemplarStore:
         chosen: list[Exemplar] = []
         for i in order:
             e = self.items[i]
-            if not all(ctx.has(r) for r in e.requires) or any(a in ctx.tables for a in e.absent):
+            if not all(ctx.has(r) for r in e.requires) or any(ctx.has(a) for a in e.absent):
                 continue
             chosen.append(e)
             if len(chosen) >= k:

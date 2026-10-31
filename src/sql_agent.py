@@ -18,7 +18,7 @@ from .entities import entities_prompt
 from .formatter import FormatError, format_answer
 from .llm import LLMClient, LLMError
 from .prompts import BizContext, ExemplarStore, build_messages
-from .protocol import Draft, ProtocolError, parse_response, resolve_periods, substitute
+from .protocol import Draft, ProtocolError, dates_in_text, parse_response, resolve_periods, substitute
 from .rules import Rules
 from .sandbox import Sandbox, SandboxError
 
@@ -72,7 +72,8 @@ class SQLAgent:
         self.retry_conf = float(cfg["decide"].get("retry_confidence", 0.7))
 
     # ------------------------------------------------------------------ one draft
-    def _execute(self, text: str, ctx: BizContext, sb: Sandbox, resolver: DateResolver) -> tuple[Optional[dict], dict]:
+    def _execute(self, text: str, ctx: BizContext, sb: Sandbox, resolver: DateResolver,
+                 allowed_dates: Optional[set] = None) -> tuple[Optional[dict], dict]:
         """Returns (answer or None, trace). Raises nothing: errors go to trace['error']."""
         trace: dict[str, Any] = {"raw": text}
         try:
@@ -85,7 +86,7 @@ class SQLAgent:
             if bad:
                 trace["forced"] = bad
                 return _unanswerable(bad), trace
-            sql = substitute(d.sql, periods, self.rules.date)
+            sql = substitute(d.sql, periods, self.rules.date, (allowed_dates or set()) | {resolver.today})
             trace["sql_final"] = sql
             df = sb.run(sql, self.timeout)
             trace["rows"] = len(df)
@@ -101,9 +102,15 @@ class SQLAgent:
         if t in ("number", "percent", "string", "date", "boolean"):
             if len(df) == 0:
                 raise FormatError("truy vấn không trả về dòng nào (hãy dùng COALESCE(SUM(...), 0) nếu kết quả hợp lệ là 0)")
+            if df.shape[1] == 1 and len(df) > 1 and df.iloc[:, 0].nunique(dropna=True) == 1:
+                df = df.iloc[:1]                      # the same value repeated (e.g. one price on several lines)
+            if df.shape[1] == 1 and len(df) > 1:
+                raise FormatError(f"kết quả có {len(df)} dòng nhưng TYPE {t} cần đúng 1 giá trị: hãy gộp lại bằng "
+                                  "COUNT/SUM/MAX/mode hoặc bọc truy vấn trong SELECT COUNT(*) FROM (...). "
+                                  "Chỉ dùng TYPE list khi câu hỏi hỏi một danh sách đối tượng")
             if df.shape != (1, 1):
                 raise FormatError(f"kết quả có {df.shape[0]} dòng × {df.shape[1]} cột nhưng TYPE {t} cần đúng 1 giá trị. "
-                                  "Nhiều số theo thứ tự câu hỏi → TYPE: list (một dòng, mỗi số một cột); nhiều đối tượng → list hoặc table")
+                                  "Nhiều số theo thứ tự câu hỏi → TYPE: list (một dòng, mỗi số một cột)")
             v = df.iat[0, 0]
             if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
                 raise FormatError("kết quả là NULL (không có dòng nào khớp điều kiện; kiểm tra lại điều kiện lọc/tên thực thể)")
@@ -138,12 +145,12 @@ class SQLAgent:
         return ""
 
     # ------------------------------------------------------------------ retries
-    def _run_chain(self, messages: list[dict], first_text: str, ctx, sb, resolver) -> Sample:
+    def _run_chain(self, messages: list[dict], first_text: str, ctx, sb, resolver, allowed_dates=None) -> Sample:
         s = Sample()
         text = first_text
         msgs = list(messages)
         for attempt in range(self.max_retries + 1):
-            ans, trace = self._execute(text, ctx, sb, resolver)
+            ans, trace = self._execute(text, ctx, sb, resolver, allowed_dates)
             trace["attempt"] = attempt
             s.attempts.append(trace)
             if ans is not None:
@@ -177,7 +184,8 @@ class SQLAgent:
             texts = self.llm.chat(msgs, n=n, temperature=0.0 if n == 1 else self.sample_temp)
         except LLMError as e:
             return AgentResult({"type": "abstain"}, 0.0, [], ents_text, question_norm, error=f"LLM: {e}")
-        samples = [self._run_chain(msgs, t, ctx, sb, resolver) for t in texts]
+        allowed = dates_in_text(question_norm)
+        samples = [self._run_chain(msgs, t, ctx, sb, resolver, allowed) for t in texts]
         votes = collections.Counter(s.key for s in samples if s.answer is not None)
         if not votes:
             last = samples[0].attempts[-1].get("error", "") if samples and samples[0].attempts else "no output"

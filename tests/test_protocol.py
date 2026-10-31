@@ -57,3 +57,20 @@ def test_substitution_errors():
             substitute(bad, ps, DateRules())
     with pytest.raises(ProtocolError):
         resolve_periods({"P1": "nonsense"}, r)
+
+
+def test_dates_copied_from_the_question_are_allowed_and_bare_placeholder():
+    from src.protocol import dates_in_text
+    r = DateResolver(D(2026, 5, 25))
+    ps = resolve_periods({"P1": "until_today"}, r)
+    allowed = dates_in_text("lô gần hết hạn nhất theo tồn kho ngày 25/05/2026")
+    assert D(2026, 5, 25) in allowed
+    assert "DATE '2026-05-25'" in substitute("SELECT 1 WHERE e >= {P1}", ps, DateRules())
+    assert "'2026-05-25'" in substitute("SELECT 1 WHERE e >= '2026-05-25'", ps, DateRules(), allowed)
+    with pytest.raises(ProtocolError):                     # a date that is not in the question
+        substitute("SELECT 1 WHERE e >= '2026-05-26'", ps, DateRules(), allowed)
+    with pytest.raises(ProtocolError):
+        substitute("SELECT 1 WHERE e < current_date - INTERVAL 3 DAY", ps, DateRules(), allowed)
+    mps = resolve_periods({"P1": "month:2026-03"}, r)
+    with pytest.raises(ProtocolError):                     # a month used as a bare date is ambiguous
+        substitute("SELECT {P1}", mps, DateRules())

@@ -94,10 +94,39 @@ _SHIFT_RE = re.compile(r"\{SHIFT:(\w+):([A-Za-z_][\w.]*)\}")
 _DATE_LITERAL_RE = re.compile(r"'\d{4}-\d{2}-\d{2}'|\bDATE\s*'|\bINTERVAL\b|current_date|today\(\)|\bnow\(\)", re.I)
 
 
-def substitute(sql: str, periods: dict[str, Period], rules: DateRules) -> str:
-    if _DATE_LITERAL_RE.search(sql):
-        raise ProtocolError("không được viết ngày trực tiếp hoặc dùng current_date/INTERVAL; khai báo PERIODS và dùng "
-                            "{P1:cột_ngày}, {P1.start}, {P1.end}, {P1.last}")
+_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_DMY_TEXT_RE = re.compile(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})\b")
+_LIT_DATE_RE = re.compile(r"(?:\bDATE\s*)?'(\d{4})-(\d{2})-(\d{2})'", re.I)
+
+
+def dates_in_text(text: str) -> set:
+    """Calendar dates written in the question (dd/mm/yyyy or yyyy-mm-dd)."""
+    import datetime as _dt
+    out = set()
+    for y, m, d in [(a, b, c) for c, b, a in _DMY_TEXT_RE.findall(text)] + _ISO_RE.findall(text):
+        try:
+            out.add(_dt.date(int(y), int(m), int(d)))
+        except ValueError:
+            pass
+    return out
+
+
+def substitute(sql: str, periods: dict[str, Period], rules: DateRules, allowed_dates: set | None = None) -> str:
+    """Expand placeholders. Literal dates are accepted only if they were written in the question (or are today):
+    copying a date is safe, computing one is not."""
+    import datetime as _dt
+    allowed = allowed_dates or set()
+    for y, m, d in _LIT_DATE_RE.findall(sql):
+        try:
+            ok = _dt.date(int(y), int(m), int(d)) in allowed
+        except ValueError:
+            ok = False
+        if not ok:
+            raise ProtocolError(f"ngày '{y}-{m}-{d}' không có trong câu hỏi. Không tự tính/đoán ngày: khai báo PERIODS và dùng "
+                                "{P1:cột_ngày}, {P1.start}, {P1.end}, {P1.last}")
+    if re.search(r"\bINTERVAL\b|current_date|today\(\)|\bnow\(\)", sql, re.I):
+        raise ProtocolError("không dùng current_date/INTERVAL; khai báo PERIODS và dùng {P1:cột_ngày}, {P1.start}, "
+                            "{P1.end}, {P1.last}; cộng/trừ ngày bằng số: {P1.last} - 15")
 
     def need(name: str) -> Period:
         if name not in periods:
@@ -115,6 +144,13 @@ def substitute(sql: str, periods: dict[str, Period], rules: DateRules) -> str:
         d = {"start": p.start, "end": p.end, "last": p.last_day}[a]
         return f"DATE '{d.isoformat()}'"
 
+    def bare(m):
+        p = need(m.group(1))
+        if p.kind in ("day", "until"):
+            return f"DATE '{p.last_day.isoformat()}'"
+        raise ProtocolError(f"{{{m.group(1)}}} đứng một mình không rõ nghĩa: dùng {{{m.group(1)}:cột_ngày}} để lọc, "
+                            f"hoặc {{{m.group(1)}.start}}/{{{m.group(1)}.end}}/{{{m.group(1)}.last}} cho một mốc ngày")
+
     def shift(m):
         if m.group(1) not in rules.shifts:
             raise ProtocolError(f"ca '{m.group(1)}' không có trong rulebook (có: {', '.join(rules.shifts)})")
@@ -123,6 +159,7 @@ def substitute(sql: str, periods: dict[str, Period], rules: DateRules) -> str:
     out = _COND_RE.sub(cond, sql)
     out = _LIT_RE.sub(lit, out)
     out = _SHIFT_RE.sub(shift, out)
+    out = re.sub(r"\{(P\d+)\}", bare, out)
     left = re.findall(r"\{[^{}]{1,40}\}", out)
     if left:
         raise ProtocolError(f"placeholder không hợp lệ trong SQL: {left[0]}")
