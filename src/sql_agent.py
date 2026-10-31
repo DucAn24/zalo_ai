@@ -165,8 +165,7 @@ class SQLAgent:
             fix = (f"Lỗi: {err}\nHãy sửa và trả lời lại đúng định dạng (TYPE/PERIODS/SQL), "
                    f"chỉ dùng bảng/cột có trong danh sách.")
             if re.search(r"UNION", trace.get("sql", ""), re.I) and re.search(r"not found", err, re.I):
-                fix += ("
-Gợi ý: UNION ALL xếp các giá trị thành nhiều DÒNG của cùng một cột, nên không tham chiếu được tên cột "
+                fix += ("\nGợi ý: UNION ALL xếp các giá trị thành nhiều DÒNG của cùng một cột, nên không tham chiếu được tên cột "
                         "của nhánh khác. Để so sánh nhiều kỳ hãy đặt mỗi kỳ là một subquery trong FROM: "
                         "FROM (SELECT SUM(...) AS s FROM ... WHERE {P1:cột_ngày}) a, (SELECT ... {P2:cột_ngày}) b, ... "
                         "rồi so a.s, b.s, c.s.")
