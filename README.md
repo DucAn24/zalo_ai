@@ -16,7 +16,10 @@ Offline agent answering Vietnamese questions over small-business tables (CSV / E
    substituted for `{P1:order_date}`; literal dates in SQL are rejected.
 5. `sandbox` runs the read-only SQL (timeout); `formatter` coerces the type; errors go back to the model
    (max `sql.max_retries`). Periods fully outside the shop's data range → `unanswerable` by code.
-6. `decide`: answer if confidence ≥ threshold (`penalty / (1 + penalty)` by default), else `abstain`.
+6. `decide`: confidence = vote share of `n_samples` SQL drafts (sample 0 greedy, rest sampled); answer if confidence ≥ threshold
+   = max(`penalty / (1 + penalty)` with the penalty read from the split's rulebook §9, `decide.min_confidence`), else `abstain`.
+   An `unanswerable` whose reason names a column the data has is retried, and if it persists its confidence is ×0.7.
+   `eval.py` prints a calibration table (accuracy and PA per confidence) to choose `min_confidence`.
 7. `main`: appends to `submission.jsonl` + `logs/logs.jsonl` after every question (flush).
 
 Run: `python -m src.main --data /data --out /result` (needs an OpenAI-compatible server at `LLM_BASE_URL`).
@@ -61,7 +64,7 @@ tests/          pytest
 
 ## Configuration
 `configs/default.yaml`, overridable by env: `DATA_DIR`, `RESULT_DIR`, `CACHE_DIR`, `LLM_BASE_URL`,
-`LLM_MODEL`, `PA_PENALTY`, `ANSWER_THRESHOLD`, `N_SAMPLES`, `WORKERS`.
+`LLM_MODEL`, `PA_PENALTY`, `ANSWER_THRESHOLD`, `MIN_CONFIDENCE`, `N_SAMPLES`, `WORKERS`.
 
 ## Validation protocol
 `configs/eval_splits.yaml` labels train businesses by type **for evaluation only**:

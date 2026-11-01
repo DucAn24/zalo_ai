@@ -78,7 +78,7 @@ class Runtime:
         self.agent = SQLAgent(cfg, self.llm, self.exemplars, self.rules)
         self.qn = QuestionNormalizer(_read_vocab())
         self.qn.add_vocab([self.rules.text])
-        self.threshold = answer_threshold(cfg)
+        self.threshold = answer_threshold(cfg, self.rules.penalty_hint)
         self._biz: "collections.OrderedDict[str, BizRuntime]" = collections.OrderedDict()
         self._locks: dict[str, threading.Lock] = collections.defaultdict(threading.Lock)
         self._glock = threading.Lock()

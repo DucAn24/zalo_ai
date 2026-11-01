@@ -27,8 +27,11 @@ decide:
   penalty: 1.0                         # PA_PENALTY
   # Answer when the estimated probability of being right is >= threshold.
   # 'auto' = penalty / (1 + penalty)  (0.5 for penalty 1).
-  answer_threshold: auto               # ANSWER_THRESHOLD
-  n_samples: 1                         # self-consistency samples (1 = off)
+  answer_threshold: auto               # ANSWER_THRESHOLD  (auto uses the penalty stated in the split's rulebook §9)
+  # Floor on the answer threshold. Confidence is the vote share of n_samples, so with 5 samples 0.6 means
+  # "at least 3 of 5 agree". Re-fit with eval.py's calibration table (accuracy per confidence) after each change.
+  min_confidence: 0.6                  # MIN_CONFIDENCE
+  n_samples: 5                         # self-consistency samples (1 = off); sample 0 is greedy, the rest are sampled
   sample_temperature: 0.6              # temperature when n_samples > 1
   retry_confidence: 0.7                # confidence of an answer that needed a retry (n_samples = 1)
   retry_temperature: 0.5               # temperature of the 2nd+ retry (the 1st retry is greedy); seed stays fixed

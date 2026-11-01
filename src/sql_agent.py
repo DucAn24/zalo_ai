@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -36,6 +37,7 @@ class Sample:
     attempts: list[dict] = field(default_factory=list)
     ok_first_try: bool = False
     forced_unanswerable: bool = False      # decided by code (period outside the data)
+    suspect: bool = False                  # LLM said 'unanswerable' but its reason names a column the data has
 
 
 @dataclass
@@ -48,6 +50,20 @@ class AgentResult:
     sql: str = ""
     periods: dict[str, str] = field(default_factory=dict)
     error: str = ""
+
+
+_IDENT_RE = re.compile(r"`([A-Za-z_][\w.]*)`|\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b")
+SUSPECT_PENALTY = 0.7        # confidence multiplier for an 'unanswerable' that still names an existing column
+
+
+def existing_columns_named(reason: str, ctx: BizContext) -> list[str]:
+    """Columns the reason claims are missing although the business has them (with data) in some table."""
+    out: list[str] = []
+    for m in _IDENT_RE.finditer(reason or ""):
+        tok = (m.group(1) or m.group(2)).split(".")[-1]
+        if tok in ctx.any_nonnull and tok not in ctx.tables and tok not in out:
+            out.append(tok)
+    return out
 
 
 def _canon(ans: dict) -> str:
@@ -154,10 +170,18 @@ class SQLAgent:
             ans, trace = self._execute(text, ctx, sb, resolver, allowed_dates)
             trace["attempt"] = attempt
             s.attempts.append(trace)
+            named: list[str] = []
+            if ans is not None and ans.get("type") == "unanswerable" and "forced" not in trace:
+                named = existing_columns_named(ans.get("reason", ""), ctx)
+                if named and attempt < self.max_retries:
+                    trace["error"] = (f"lý do unanswerable nhắc tới cột {', '.join(named)} nhưng dữ liệu CÓ cột này "
+                                      "(xem danh sách bảng/cột; có thể cần JOIN sang bảng khác)")
+                    ans = None
             if ans is not None:
                 s.answer, s.key = ans, _canon(ans)
                 s.ok_first_try = attempt == 0
                 s.forced_unanswerable = "forced" in trace
+                s.suspect = bool(named)
                 return s
             if attempt == self.max_retries:
                 break
@@ -187,11 +211,17 @@ class SQLAgent:
         msgs = build_messages(ctx, self.exemplars, question_norm, as_of, ents_text, self.k_ex)
         n = max(1, self.n_samples)
         try:
-            texts = self.llm.chat(msgs, n=n, temperature=0.0 if n == 1 else self.sample_temp)
+            texts = self.llm.chat(msgs, n=1, temperature=0.0)            # sample 0 is greedy: it wins ties
+            if n > 1:
+                texts += self.llm.chat(msgs, n=n - 1, temperature=self.sample_temp)
         except LLMError as e:
             return AgentResult({"type": "abstain"}, 0.0, [], ents_text, question_norm, error=f"LLM: {e}")
         allowed = dates_in_text(question_norm)
-        samples = [self._run_chain(msgs, t, ctx, sb, resolver, allowed) for t in texts]
+        if len(texts) == 1:
+            samples = [self._run_chain(msgs, texts[0], ctx, sb, resolver, allowed)]
+        else:   # chains (retries included) are independent; run them concurrently, keep sample order
+            with ThreadPoolExecutor(len(texts)) as ex:
+                samples = list(ex.map(lambda t: self._run_chain(msgs, t, ctx, sb, resolver, allowed), texts))
         votes = collections.Counter(s.key for s in samples if s.answer is not None)
         if not votes:
             last = samples[0].attempts[-1].get("error", "") if samples and samples[0].attempts else "no output"
@@ -201,6 +231,8 @@ class SQLAgent:
         conf = cnt / n
         if n == 1 and not winner.ok_first_try:
             conf = self.retry_conf
+        if winner.suspect:
+            conf *= SUSPECT_PENALTY
         last = winner.attempts[-1]
         return AgentResult(winner.answer, conf, samples, ents_text, question_norm,
                            sql=last.get("sql_final") or last.get("sql", ""), periods=last.get("periods", {}))

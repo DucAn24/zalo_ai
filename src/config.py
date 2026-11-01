@@ -21,6 +21,7 @@ ENV_MAP = {
     "DISABLE_THINKING": ("llm", "disable_thinking"),
     "PA_PENALTY": ("decide", "penalty"),
     "ANSWER_THRESHOLD": ("decide", "answer_threshold"),
+    "MIN_CONFIDENCE": ("decide", "min_confidence"),
     "N_SAMPLES": ("decide", "n_samples"),
     "WORKERS": ("run", "workers"),
     "TIME_BUDGET_S": ("run", "time_budget_s"),
@@ -57,10 +58,12 @@ def load_config(path: str | None = None, overrides: dict | None = None) -> dict:
     return cfg
 
 
-def answer_threshold(cfg: dict) -> float:
+def answer_threshold(cfg: dict, rulebook_penalty: float | None = None) -> float:
+    """Minimum confidence to answer. 'auto' = break-even p/(1+p) with the penalty of the split's rulebook
+    (config penalty when the rulebook does not state one), never below decide.min_confidence."""
     d = cfg.get("decide", {})
     t = d.get("answer_threshold", "auto")
     if t in (None, "auto"):
-        p = float(d.get("penalty", 1.0))
-        return p / (1.0 + p)
-    return float(t)
+        p = rulebook_penalty if rulebook_penalty is not None else float(d.get("penalty", 1.0))
+        t = p / (1.0 + p)
+    return max(float(t), float(d.get("min_confidence", 0.0)))

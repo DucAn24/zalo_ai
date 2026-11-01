@@ -75,16 +75,50 @@ def select_questions(questions, splits, group=None, biz=None, sample=None, seed=
     return qs
 
 
+def calibration(items, penalty, groups=None):
+    """items: (confidence, proposed_correct: bool, proposed_type). Prints accuracy of the *proposed* answers per
+    confidence level (before the threshold abstains) and the PA obtained by answering only when conf >= t."""
+    if not items:
+        print("(no confidence in logs: pass --logs / use --run to see the calibration table)")
+        return None
+    levels = sorted({round(c, 3) for c, _, _ in items})
+    print(f"--- calibration: accuracy of proposed answers per confidence (n={len(items)}, penalty={penalty:g})")
+    print(f"  {'conf':>6s} {'n':>5s} {'right':>6s} {'acc':>6s} | threshold>=conf: {'answered':>8s} {'PA':>8s}")
+    best = (float("-inf"), None)
+    for t in levels:
+        at = [ok for c, ok, _ in items if round(c, 3) == t]
+        kept = [ok for c, ok, _ in items if round(c, 3) >= t]
+        pa = (sum(kept) - penalty * (len(kept) - sum(kept))) / len(items)
+        print(f"  {t:6.2f} {len(at):5d} {sum(at):6d} {sum(at) / len(at):6.2f} |{'':>18s} {len(kept):8d} {pa:8.3f}")
+        if pa > best[0] + 1e-12:
+            best = (pa, t)
+    print(f"  abstain-all PA = 0.000; best threshold on this sample: conf >= {best[1]:.2f} (PA {best[0]:.3f})."
+          f" Break-even accuracy = {penalty / (1 + penalty):.2f}")
+    by_type = collections.defaultdict(lambda: [0, 0])
+    for _, ok, ty in items:
+        by_type[ty][0] += 1
+        by_type[ty][1] += int(ok)
+    print("--- accuracy of proposed answers per predicted type")
+    for ty, (n, r) in sorted(by_type.items(), key=lambda kv: -kv[1][0]):
+        print(f"  {ty:14s} n={n:4d} right={r:4d} acc={r / n:.2f}")
+    return best
+
+
 def score(questions, answers, preds, splits, penalty, logs=None, out_csv=None):
     total = Score()
     by = {k: collections.defaultdict(Score) for k in ("group", "type", "category", "business")}
     rows = []
+    calib = []
     for q in questions:
         gold = answers.get(q["id"])
         if gold is None:
             continue
         pred = preds.get(q["id"])
         ok = is_correct(pred, gold)
+        lg0 = (logs or {}).get(q["id"], {})
+        if lg0.get("confidence") is not None and (lg0.get("proposed") or {}).get("type") not in (None, "abstain"):
+            calib.append((float(lg0["confidence"]), bool(is_correct(lg0["proposed"], gold)),
+                          lg0["proposed"].get("type", "?")))
         total.add(ok)
         keys = {"group": splits.group(q["business_id"]), "type": gold["type"], "category": category(q["question"]),
                 "business": q["business_id"]}
@@ -96,12 +130,13 @@ def score(questions, answers, preds, splits, penalty, logs=None, out_csv=None):
                      "gold": json.dumps(gold.get("answer"), ensure_ascii=False),
                      "pred_type": (pred or {}).get("type"), "pred": json.dumps((pred or {}).get("answer"), ensure_ascii=False),
                      "result": "abstain" if ok is None else ("ok" if ok else "wrong"),
-                     "sql": lg.get("sql", ""), "error": lg.get("error", ""), "elapsed": lg.get("elapsed_s", "")})
+                     "confidence": lg.get("confidence", ""), "sql": lg.get("sql", ""), "error": lg.get("error", ""), "elapsed": lg.get("elapsed_s", "")})
     print(f"TOTAL   {total.fmt(penalty)}")
     for k in ("group", "type", "category", "business"):
         print(f"--- by {k}")
         for v, s in sorted(by[k].items(), key=lambda kv: (-kv[1].n, kv[0])):
             print(f"  {v:18s} {s.fmt(penalty)}")
+    calibration(calib, penalty)
     if out_csv:
         with open(out_csv, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["id"])
